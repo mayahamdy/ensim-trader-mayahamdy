@@ -3,7 +3,7 @@ import requests
 
 # Fill these in with the URLs the organizer gave you when they registered you:
 MARKET_URL = "https://raw.githubusercontent.com/exofri/ensim-trade-center/refs/heads/main/docs/data/market.json"
-HOLDINGS_URL = "http://raw.githubusercontent.com/exofri/ensim-trade-center/refs/heads/main/traders/[YOUR_NAME]/holdings.json"
+HOLDINGS_URL = "https://raw.githubusercontent.com/exofri/ensim-trade-center/refs/heads/main/traders/mayahamdy/holdings.json"
 
 MIN_MONEY_RESERVE = 50 # never let a buy signal spend below this much money
 
