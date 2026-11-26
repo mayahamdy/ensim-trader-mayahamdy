@@ -122,19 +122,20 @@
     <div class="row">
       <div>
         <h2>Product signals — what compute_signal sees</h2>
-        <p class="sub">Price vs. 5-tick (short) and 15-tick (long) moving averages. Short above long → buy, below → sell.
-          The signal = 10 × the gap between them, clipped to [−1, 1].</p>
+        <p class="sub">Each run fits <i>trend + one sine cycle</i> to the last 200 prices and forecasts 12 ticks ahead.
+          Forecast above today's price → buy, below → sell. Signal = 40 × expected % change, clipped to [−1, 1].
+          The bars below are the signal the model would have given at each past tick.</p>
       </div>
       <div role="group" aria-label="Signal window">
         <button type="button" data-win="30" aria-pressed="false">30 ticks</button>
         <button type="button" data-win="60" aria-pressed="true">60 ticks</button>
-        <button type="button" data-win="0" aria-pressed="false">All</button>
+        <button type="button" data-win="120" aria-pressed="false">120 ticks</button>
       </div>
     </div>
     <div class="legend">
       <span><i class="swatch" style="border-color:var(--ink-2)"></i>Price</span>
-      <span><i class="swatch" style="border-color:var(--s1)"></i>Short MA (5)</span>
-      <span><i class="swatch" style="border-color:var(--s2);border-top-style:dashed"></i>Long MA (15)</span>
+      <span><i class="swatch" style="border-color:var(--s1)"></i>Fitted trend + cycle</span>
+      <span><i class="swatch" style="border-color:var(--s2);border-top-style:dashed"></i>Forecast (next 12 ticks)</span>
       <span><i class="dot" style="background:var(--pos)"></i>Buy signal</span>
       <span><i class="dot" style="background:var(--neg)"></i>Sell signal</span>
     </div>
@@ -188,17 +189,55 @@ function value(h, prices) {
   return h.money + PRODUCTS.reduce((s, p) => s + (h.products[p] || 0) * prices[p], 0);
 }
 
-// Mirrors scripts/algorithm.py signal_details() exactly.
+// Mirrors scripts/algorithm.py (fit_cycle / signal_details): same window, periods, horizon, gain.
+const FIT_WINDOW = 200, MIN_HISTORY = 40, HORIZON = 12, GAIN = 40;
+
+function solve4(A, y) { // Gaussian elimination with partial pivoting on a 4x4 system
+  const M = A.map((r, i) => [...r, y[i]]);
+  for (let c = 0; c < 4; c++) {
+    let piv = c;
+    for (let r = c + 1; r < 4; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    for (let r = c + 1; r < 4; r++) {
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k < 5; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  const b = [0, 0, 0, 0];
+  for (let r = 3; r >= 0; r--) {
+    let s = M[r][4];
+    for (let k = r + 1; k < 4; k++) s -= M[r][k] * b[k];
+    b[r] = s / M[r][r];
+  }
+  return b;
+}
+
+function fitCycle(prices) {
+  const x = prices.slice(-FIT_WINDOW), n = x.length;
+  let best = null;
+  for (let P = 10; P <= 130; P++) {
+    const XtX = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]], Xty = [0, 0, 0, 0];
+    for (let t = 0; t < n; t++) {
+      const w = 2 * Math.PI * t / P, row = [1, t, Math.sin(w), Math.cos(w)];
+      for (let i = 0; i < 4; i++) { Xty[i] += row[i] * x[t]; for (let j = 0; j < 4; j++) XtX[i][j] += row[i] * row[j]; }
+    }
+    const b = solve4(XtX, Xty);
+    let sse = 0;
+    for (let t = 0; t < n; t++) { const w = 2 * Math.PI * t / P; const e = b[0] + b[1]*t + b[2]*Math.sin(w) + b[3]*Math.cos(w) - x[t]; sse += e * e; }
+    if (!best || sse < best.sse) best = { sse, period: P, coef: b };
+  }
+  const mean = x.reduce((a, v) => a + v, 0) / n;
+  const sst = x.reduce((a, v) => a + (v - mean) ** 2, 0) || 1;
+  return { ...best, n, r2: 1 - best.sse / sst };
+}
+
+const modelAt = (fit, k) => { const [a, b, c, d] = fit.coef, w = 2 * Math.PI * k / fit.period; return a + b*k + c*Math.sin(w) + d*Math.cos(w); };
+
 function signalAt(prices) {
-  const n = prices.length;
-  if (n < 3) return null;
-  const sw = Math.min(5, Math.max(2, Math.floor(n / 3)));
-  const lw = Math.min(15, n);
-  const avg = k => prices.slice(-k).reduce((a, b) => a + b, 0) / k;
-  const s = avg(sw), l = avg(lw);
-  if (l === 0) return null;
-  const gap = (s - l) / Math.abs(l);
-  return { short: s, long: l, gap: gap * 100, signal: Math.max(-1, Math.min(1, gap * 10)) };
+  if (prices.length < MIN_HISTORY) return null;
+  const fit = fitCycle(prices), price = prices[prices.length - 1];
+  const forecast = modelAt(fit, fit.n - 1 + HORIZON), change = (forecast - price) / price;
+  return { fit, price, forecast, change: change * 100, signal: Math.max(-1, Math.min(1, GAIN * change)) };
 }
 
 async function load() {
@@ -393,21 +432,36 @@ function renderSignals() {
     const rows = [];
     for (let i = from; i < hist.length; i++) {
       const s = signalAt(prices.slice(0, i + 1));
-      rows.push({ x: hist[i].t, ts: hist[i].timestamp, price: prices[i], short: s?.short, long: s?.long, sig: s ? s.signal : 0 });
+      rows.push({ x: hist[i].t, ts: hist[i].timestamp, price: prices[i], sig: s ? s.signal : 0 });
+    }
+    const cur = signalAt(prices);
+    const lastT = hist[hist.length - 1].t;
+    // Current fit drawn over the visible window, then extended HORIZON ticks into the future.
+    const fitted = [], future = [];
+    if (cur) {
+      const k0 = cur.fit.n - 1; // model index of the latest tick
+      for (let i = from; i < hist.length; i++) {
+        const k = k0 - (hist.length - 1 - i);
+        if (k >= 0) fitted.push({ x: hist[i].t, y: modelAt(cur.fit, k), ts: hist[i].timestamp });
+      }
+      for (let h = 0; h <= HORIZON; h++) future.push({ x: lastT + h, y: modelAt(cur.fit, k0 + h) });
     }
     const ink2 = css("--ink-2");
-    const mk = (label, key, color, extra = {}) => ({ label, data: rows.map(r => ({ x: r.x, y: r[key], ts: r.ts })),
-      borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0, ...extra });
+    const line = (label, data, color, extra = {}) => ({ label, data, borderColor: color, backgroundColor: color,
+      borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0, ...extra });
     const po = baseOptions("", v => v.toFixed(2));
     po.scales.x.title.display = false;
+    po.scales.x.max = lastT + HORIZON;
     draw("price" + p, { type: "line", options: po, data: { datasets: [
-      mk("Price", "price", ink2, { borderWidth: 1.5 }),
-      mk("Short MA (5)", "short", css("--s1")),
-      mk("Long MA (15)", "long", css("--s2"), { borderDash: [6, 4] }),
+      line("Price", rows.map(r => ({ x: r.x, y: r.price, ts: r.ts })), ink2, { borderWidth: 1.5 }),
+      line("Fitted", fitted, css("--s1")),
+      line("Forecast", future, css("--s2"), { borderDash: [6, 4],
+        pointRadius: future.map((_, i) => i === future.length - 1 ? 4 : 0) }),
     ] } });
 
     const so = baseOptions("", v => v.toFixed(1));
     so.scales.x.title.display = false; so.scales.x.ticks.display = false;
+    so.scales.x.max = lastT + HORIZON; // align bars with the price chart above
     so.scales.y.min = -1; so.scales.y.max = 1; so.scales.y.ticks.stepSize = 1;
     so.plugins.tooltip.callbacks.label = c => `Raw signal: ${sgn(c.parsed.y)}`;
     draw("sig" + p, { type: "bar", options: so, data: { datasets: [{
@@ -415,14 +469,14 @@ function renderSignals() {
       backgroundColor: rows.map(r => r.sig >= 0 ? css("--pos") : css("--neg")),
       barPercentage: 1, categoryPercentage: 0.8, borderRadius: 2 }] } });
 
-    const cur = signalAt(prices);
     const fin = lastDec ? lastDec.decision[p] : null;
     document.getElementById("now" + p).innerHTML = cur
       ? `raw <b>${sgn(cur.signal)}</b>${fin != null ? ` → sent <b>${sgn(fin)}</b>` : ""}` : "not enough history";
     if (h) {
       const px = prices[prices.length - 1];
       document.getElementById("pos" + p).textContent =
-        `Holding ${fmt(h.products[p], 1)} units × ${px.toFixed(3)} = ${fmt(h.products[p] * px)} · MA gap ${cur ? pct(cur.gap) : "—"}`;
+        `Holding ${fmt(h.products[p], 1)} units × ${px.toFixed(3)} = ${fmt(h.products[p] * px)}` +
+        (cur ? ` · cycle ${cur.fit.period} ticks, R² ${cur.fit.r2.toFixed(2)} · 12-tick forecast ${cur.forecast.toFixed(3)} (${pct(cur.change)})` : "");
     }
   }
 }

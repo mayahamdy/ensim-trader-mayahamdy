@@ -1,4 +1,5 @@
 import json, os, time
+import numpy as np
 import requests
 
 # Fill these in with the URLs the organizer gave you when they registered you:
@@ -19,33 +20,70 @@ def fetch_json(url):
     resp.raise_for_status()
     return resp.json()
 
+# --- Signal: trend + cycle forecast -----------------------------------------
+# Observed prices are very well described by  price(t) = a + b*t + one sine wave
+# (R^2 ~ 0.98 for every product; cycles of ~48, ~96 and ~24 ticks for A, B, C).
+# A moving average only confirms a turn after it has happened, so on a cyclical
+# price it systematically buys high and sells low. Instead we fit the model to
+# recent history and trade on where it says the price is heading.
+# Parameters chosen by backtest -- see scripts/backtest.py.
+FIT_WINDOW = 200                      # ticks of history the model is fitted on
+MIN_HISTORY = 40                      # need ~1.5 short cycles before trusting a fit
+PERIODS = np.arange(10, 131, 1.0)     # candidate cycle lengths (ticks) to search
+HORIZON = 12                          # forecast this many ticks ahead
+GAIN = 40                             # signal = GAIN x expected relative change, clipped
+
+def fit_cycle(prices):
+    """Least-squares fit of a + b*t + c*sin(2*pi*t/P) + d*cos(2*pi*t/P), best P."""
+    x = np.asarray(prices[-FIT_WINDOW:], dtype=float)
+    t = np.arange(len(x), dtype=float)
+    best = None
+    for period in PERIODS:
+        w = 2 * np.pi * t / period
+        X = np.column_stack([np.ones_like(t), t, np.sin(w), np.cos(w)])
+        coef, *_ = np.linalg.lstsq(X, x, rcond=None)
+        sse = float(((X @ coef - x) ** 2).sum())
+        if best is None or sse < best[0]:
+            best = (sse, period, coef)
+    sse, period, coef = best
+    sst = float(((x - x.mean()) ** 2).sum()) or 1.0
+    return {"period": float(period), "coef": [float(c) for c in coef],
+            "n": len(x), "r2": 1 - sse / sst}
+
+def model_value(fit, k):
+    """Model price at index k, counted from the start of the fit window."""
+    a, b, c, d = fit["coef"]
+    w = 2 * np.pi * k / fit["period"]
+    return a + b * k + c * np.sin(w) + d * np.cos(w)
+
 def signal_details(prices):
-    """The moving averages behind compute_signal, exposed for the decision log."""
-    if not prices or len(prices) < 3:
+    """Everything behind compute_signal, exposed for the decision log."""
+    if not prices or len(prices) < MIN_HISTORY:
         return None
-    short_window = min(5, max(2, len(prices) // 3))
-    long_window = min(15, len(prices))
-    short_average = sum(prices[-short_window:]) / short_window
-    long_average = sum(prices[-long_window:]) / long_window
-    if long_average == 0:
+    fit = fit_cycle(prices)
+    price = float(prices[-1])
+    forecast = float(model_value(fit, fit["n"] - 1 + HORIZON))
+    if price <= 0:
         return None
-    relative_change = (short_average - long_average) / abs(long_average)
+    change = (forecast - price) / price
     return {
-        "short_ma": short_average,
-        "long_ma": long_average,
-        "gap_pct": relative_change * 100,
-        "signal": max(-1.0, min(1.0, relative_change * 10)),
+        "period": fit["period"],
+        "r2": fit["r2"],
+        "price": price,
+        "forecast": forecast,
+        "exp_change_pct": change * 100,
+        "signal": float(max(-1.0, min(1.0, GAIN * change))),
     }
 
 def compute_signal(prices):
     """
-    Use a moving-average crossover:
-    - buy when the recent average is above the longer average;
-    - sell when the recent average is below the longer average.
+    Trend + cycle forecast: fit a line plus a sine wave to the last FIT_WINDOW
+    prices, forecast HORIZON ticks ahead, and buy if the forecast is above
+    today's price (sell if below), in proportion to the expected % move.
 
-    The signal is scaled from the relative distance between the averages.
-    This keeps short histories conservative while still allowing strong trends
-    to produce signals near -1 or 1.
+    Looking ~12 ticks ahead (a quarter to half of a cycle) matters because
+    trades are capped at 100 units per tick: the position has to be built
+    *before* the turn, not after it.
     """
     d = signal_details(prices)
     return d["signal"] if d else 0.0
@@ -75,8 +113,9 @@ def explain(product, details, raw, final, money):
     if details is None:
         return f"{product}: not enough history -> hold"
     direction = "buy" if raw > 0 else "sell" if raw < 0 else "hold"
-    text = (f"{product}: short MA {details['short_ma']:.3f} vs long MA {details['long_ma']:.3f} "
-            f"({details['gap_pct']:+.2f}%) -> {direction} {raw:+.3f}")
+    text = (f"{product}: price {details['price']:.3f}, {HORIZON}-tick forecast {details['forecast']:.3f} "
+            f"({details['exp_change_pct']:+.2f}%, cycle {details['period']:.0f} ticks, R2 {details['r2']:.2f}) "
+            f"-> {direction} {raw:+.3f}")
     if raw > 0 and round(raw, 3) - final > 1e-9:
         text += f", budget guard cut to {final:+.3f} (money {money:.2f})"
     return text
