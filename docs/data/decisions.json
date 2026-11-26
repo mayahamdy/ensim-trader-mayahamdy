@@ -1,0 +1,50 @@
+[
+ {
+  "updated_at": "2026-11-24T23:37:07Z",
+  "market_t": 377,
+  "decision": {
+   "A": 0.0,
+   "B": 0.0,
+   "C": 0.0
+  },
+  "raw_signal": {
+   "A": 0.0,
+   "B": 0.0,
+   "C": 0.0
+  },
+  "money": 1000.0,
+  "reason": "Initial file: all zeros, not yet registered / no price history used"
+ },
+ {
+  "updated_at": "2026-11-26T13:17:26Z",
+  "market_t": 382,
+  "decision": {
+   "A": 0.389,
+   "B": 0.131,
+   "C": 1.0
+  },
+  "raw_signal": {
+   "A": 0.389,
+   "B": 0.131,
+   "C": 1.0
+  },
+  "money": 1000.0,
+  "reason": "A: short MA 4.625 vs long MA 4.452 (+3.89%) -> buy +0.389 | B: short MA 12.601 vs long MA 12.438 (+1.31%) -> buy +0.131 | C: short MA 1.338 vs long MA 1.171 (+14.19%) -> buy +1.000"
+ },
+ {
+  "updated_at": "2026-11-26T13:49:18Z",
+  "market_t": 384,
+  "decision": {
+   "A": 0.012,
+   "B": 0.005,
+   "C": 0.049
+  },
+  "raw_signal": {
+   "A": 0.494,
+   "B": 0.061,
+   "C": 0.527
+  },
+  "money": 55.72,
+  "reason": "A: short MA 4.726 vs long MA 4.504 (+4.94%) -> buy +0.494, budget guard cut to +0.012 (money 55.72) | B: short MA 12.586 vs long MA 12.509 (+0.61%) -> buy +0.061, budget guard cut to +0.005 (money 55.72) | C: short MA 1.273 vs long MA 1.209 (+5.27%) -> buy +0.527, budget guard cut to +0.049 (money 55.72)"
+ }
+]

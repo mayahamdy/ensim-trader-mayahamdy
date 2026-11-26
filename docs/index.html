@@ -1,19 +1,458 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Feed sanity check</title></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading desk — mayahamdy</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f9; --surface: #ffffff; --border: rgba(11,11,11,0.10);
+    --ink: #191919; --ink-2: #666666; --grid: #e7e7e7; --axis: #c2c2c2;
+    --s1: #257de0; --s2: #f47230; --s3: #00b894; --s4: #f2a600;
+    --pos: #257de0; --neg: #ec4647; --up: #006c10;
+    --good: #0aac23; --warning: #fbb315; --critical: #dc3c3d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0b0b0b; --surface: #191919; --border: rgba(255,255,255,0.10);
+      --ink: #efefef; --ink-2: #9c9c9c; --grid: #303030; --axis: #474747;
+      --s1: #338ced; --s2: #e76624; --s3: #00a888; --s4: #d28e05;
+      --pos: #338ced; --neg: #eb6263; --up: #53c556;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0b0b0b; --surface: #191919; --border: rgba(255,255,255,0.10);
+    --ink: #efefef; --ink-2: #9c9c9c; --grid: #303030; --axis: #474747;
+    --s1: #338ced; --s2: #e76624; --s3: #00a888; --s4: #d28e05;
+    --pos: #338ced; --neg: #eb6263; --up: #53c556;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 4px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 16px; margin: 0 0 2px; }
+  .sub { color: var(--ink-2); margin: 0 0 12px; }
+  .muted { color: var(--ink-2); }
+  button { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border);
+           border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button[aria-pressed="true"] { border-color: var(--ink-2); font-weight: 600; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  section { margin-top: 20px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 12px; margin-top: 16px; }
+  .tile .label { color: var(--ink-2); font-size: 12px; }
+  .tile .value { font-size: 26px; font-weight: 600; margin: 2px 0; }
+  .tile .note { color: var(--ink-2); font-size: 12px; }
+  .status { display: inline-flex; gap: 4px; align-items: center; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr); gap: 12px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .grid2 > *, .grid3 > *, .tiles > * { min-width: 0; }
+  @media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: minmax(0, 1fr); } }
+  .chart { position: relative; height: 280px; }
+  .chart.small { height: 190px; }
+  .chart.tiny { height: 90px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--ink-2); font-size: 12px; margin: 6px 0; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 18px; height: 0; border-top: 2px solid; display: inline-block; }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { color: var(--ink-2); font-weight: 500; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.me td { font-weight: 600; }
+  .sig { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .reason { color: var(--ink-2); font-size: 12px; }
+  .reason div { margin: 1px 0; }
+  .err { color: var(--critical); }
+  a { color: var(--s1); }
+</style>
+</head>
 <body>
-  <h1>Feed sanity check — not your dashboard</h1>
-  <p>This just confirms your two feed URLs actually return real data. Your actual dashboard (return vs. baselines, risk/volatility, your product-level signal, a decision log) is a separate thing you build yourself — see below.</p>
-  <pre id="out">Loading...</pre>
+<div class="wrap">
+  <header>
+    <h1>Trading desk — mayahamdy</h1>
+    <span class="muted" id="asof">Loading…</span>
+    <button id="refresh" type="button">Refresh</button>
+  </header>
+  <p class="sub">The decision each round: for each product, follow the moving-average signal or override it by hand,
+    given how I'm doing against the three random baselines and how much risk I'm carrying.</p>
+  <p id="error" class="err" hidden></p>
+
+  <div class="tiles" id="tiles"></div>
+
+  <!-- PERFORMANCE -->
+  <section class="card">
+    <div class="row">
+      <div>
+        <h2 id="perfTitle">Return since I joined vs. baselines</h2>
+        <p class="sub" id="perfSub">Every trader indexed to their value at tick <span class="joinT"></span>, when I started, so the comparison is like-for-like.</p>
+      </div>
+      <div role="group" aria-label="Performance view">
+        <button type="button" data-perf="return" aria-pressed="true">Return % since I joined</button>
+        <button type="button" data-perf="value" aria-pressed="false">Total value, whole game</button>
+      </div>
+    </div>
+    <div class="legend" id="perfLegend"></div>
+    <div class="chart"><canvas id="perfChart" aria-label="Performance chart"></canvas></div>
+  </section>
+
+  <!-- RISK -->
+  <section class="grid2">
+    <div class="card">
+      <h2>Drawdown since I joined</h2>
+      <p class="sub">How far each portfolio is below its own running peak. Deeper = more painful swings.</p>
+      <div class="legend" id="ddLegend"></div>
+      <div class="chart small"><canvas id="ddChart" aria-label="Drawdown chart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Risk / return scorecard</h2>
+      <p class="sub">Since tick <span class="joinT"></span>. Volatility = std. dev. of tick-to-tick % change in value.</p>
+      <div class="tablewrap"><table id="riskTable"></table></div>
+    </div>
+  </section>
+
+  <!-- SIGNALS -->
+  <section class="card">
+    <div class="row">
+      <div>
+        <h2>Product signals — what compute_signal sees</h2>
+        <p class="sub">Price vs. 5-tick (short) and 15-tick (long) moving averages. Short above long → buy, below → sell.
+          The signal = 10 × the gap between them, clipped to [−1, 1].</p>
+      </div>
+      <div role="group" aria-label="Signal window">
+        <button type="button" data-win="30" aria-pressed="false">30 ticks</button>
+        <button type="button" data-win="60" aria-pressed="true">60 ticks</button>
+        <button type="button" data-win="0" aria-pressed="false">All</button>
+      </div>
+    </div>
+    <div class="legend">
+      <span><i class="swatch" style="border-color:var(--ink-2)"></i>Price</span>
+      <span><i class="swatch" style="border-color:var(--s1)"></i>Short MA (5)</span>
+      <span><i class="swatch" style="border-color:var(--s2);border-top-style:dashed"></i>Long MA (15)</span>
+      <span><i class="dot" style="background:var(--pos)"></i>Buy signal</span>
+      <span><i class="dot" style="background:var(--neg)"></i>Sell signal</span>
+    </div>
+    <div class="grid3" id="signals"></div>
+  </section>
+
+  <!-- DECISION LOG -->
+  <section class="card">
+    <h2>Decision log</h2>
+    <p class="sub">What was actually written to decision.json each round (after the budget guard), with the raw signal in brackets and the reason.</p>
+    <div class="tablewrap"><table id="logTable"></table></div>
+  </section>
+
+  <p class="muted" style="margin-top:20px">Sources: organizer market &amp; holdings feeds (live) + this repo's
+    <code>docs/data/history.json</code> / <code>decisions.json</code> (written by the Auto decide workflow).
+    <a href="sanity.html">Feed sanity check</a>.</p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
-const MARKET_URL = "https://raw.githubusercontent.com/exofri/ensim-trade-center/refs/heads/main/docs/data/market.json";
-const HOLDINGS_URL = "https://raw.githubusercontent.com/exofri/ensim-trade-center/refs/heads/main/traders/mayahamdy/holdings.json";
-Promise.all([fetch(MARKET_URL).then(r => r.json()), fetch(HOLDINGS_URL).then(r => r.json())])
-  .then(([market, holdings]) => {
-    document.getElementById('out').textContent =
-      'MARKET:\n' + JSON.stringify(market, null, 2) + '\n\nHOLDINGS:\n' + JSON.stringify(holdings, null, 2);
-  })
-  .catch(err => { document.getElementById('out').textContent = 'Could not load data: ' + err; });
+const ORG = "https://raw.githubusercontent.com/exofri/ensim-trade-center/refs/heads/main";
+const MINE = "https://raw.githubusercontent.com/mayahamdy/ensim-trader-mayahamdy/master";
+const ME = "mayahamdy";
+const BASELINES = ["random_trader", "random_buyer", "random_seller"];
+const TRADERS = [ME, ...BASELINES];
+const LABEL = { mayahamdy: "Me", random_trader: "Random trader", random_buyer: "Random buyer", random_seller: "Random seller" };
+const SLOT = { mayahamdy: "--s1", random_trader: "--s2", random_buyer: "--s3", random_seller: "--s4" };
+const DASH = { mayahamdy: [], random_trader: [6, 4], random_buyer: [2, 3], random_seller: [10, 3, 2, 3] };
+const PRODUCTS = ["A", "B", "C"];
+const RESERVE = 50;
+
+let state = null, perfMode = "return", sigWindow = 60;
+const charts = {};
+
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const fmt = (v, d = 0) => v == null || isNaN(v) ? "—" : v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (v, d = 2) => v == null || isNaN(v) ? "—" : (v > 0 ? "+" : "") + v.toFixed(d) + "%";
+const sgn = v => (v > 0 ? "+" : "") + v.toFixed(3);
+
+async function getJSON(urls) {
+  for (const u of urls) {
+    try {
+      const r = await fetch(u + (u.startsWith("http") ? "?nocache=" + Date.now() : ""), { cache: "no-store" });
+      if (r.ok) return await r.json();
+    } catch (e) { /* try next */ }
+  }
+  throw new Error("Could not load " + urls[0]);
+}
+
+function value(h, prices) {
+  return h.money + PRODUCTS.reduce((s, p) => s + (h.products[p] || 0) * prices[p], 0);
+}
+
+// Mirrors scripts/algorithm.py signal_details() exactly.
+function signalAt(prices) {
+  const n = prices.length;
+  if (n < 3) return null;
+  const sw = Math.min(5, Math.max(2, Math.floor(n / 3)));
+  const lw = Math.min(15, n);
+  const avg = k => prices.slice(-k).reduce((a, b) => a + b, 0) / k;
+  const s = avg(sw), l = avg(lw);
+  if (l === 0) return null;
+  const gap = (s - l) / Math.abs(l);
+  return { short: s, long: l, gap: gap * 100, signal: Math.max(-1, Math.min(1, gap * 10)) };
+}
+
+async function load() {
+  document.getElementById("error").hidden = true;
+  document.getElementById("asof").textContent = "Loading…";
+  try {
+    const [market, history, decisions, ...live] = await Promise.all([
+      getJSON([ORG + "/docs/data/market.json"]),
+      getJSON([MINE + "/docs/data/history.json", "data/history.json"]),
+      getJSON([MINE + "/docs/data/decisions.json", "data/decisions.json"]).catch(() => []),
+      ...TRADERS.map(t => getJSON([`${ORG}/traders/${t}/holdings.json`]).catch(() => null)),
+    ]);
+    const snaps = history.snapshots.slice();
+    // If the market has ticked since the workflow last recorded, add a live point.
+    const lastRow = market.history[market.history.length - 1];
+    const liveHoldings = Object.fromEntries(TRADERS.map((t, i) => [t, live[i]]).filter(([, h]) => h));
+    const liveSnap = { t: lastRow.t, timestamp: lastRow.timestamp,
+                       prices: Object.fromEntries(PRODUCTS.map(p => [p, lastRow[p]])), holdings: liveHoldings };
+    if (!snaps.length || lastRow.t > snaps[snaps.length - 1].t) snaps.push(liveSnap);
+    else if (lastRow.t === snaps[snaps.length - 1].t) snaps[snaps.length - 1] = liveSnap;
+
+    state = { market, snaps, decisions, live: liveHoldings };
+    render();
+    document.getElementById("asof").textContent =
+      `Market tick ${lastRow.t} · ${new Date(lastRow.timestamp).toLocaleString()} · loaded ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    const el = document.getElementById("error");
+    el.textContent = "Could not load data: " + e.message;
+    el.hidden = false;
+    document.getElementById("asof").textContent = "";
+  }
+}
+
+function series() {
+  const { snaps } = state;
+  const joinIdx = snaps.findIndex(s => s.holdings[ME]);
+  const out = {};
+  for (const t of TRADERS) {
+    out[t] = snaps.map(s => s.holdings[t] ? { t: s.t, ts: s.timestamp, v: value(s.holdings[t], s.prices) } : null).filter(Boolean);
+  }
+  const joinT = joinIdx >= 0 ? snaps[joinIdx].t : snaps[0].t;
+  const since = {};
+  for (const t of TRADERS) {
+    const pts = out[t].filter(p => p.t >= joinT);
+    const base = pts.length ? pts[0].v : NaN;
+    let peak = -Infinity;
+    since[t] = pts.map((p, i) => {
+      peak = Math.max(peak, p.v);
+      const prev = i ? pts[i - 1].v : null;
+      return { ...p, ret: (p.v / base - 1) * 100, dd: (p.v / peak - 1) * 100, step: prev ? (p.v / prev - 1) * 100 : null };
+    });
+  }
+  return { all: out, since, joinT };
+}
+
+function stats(pts) {
+  if (!pts.length) return {};
+  const steps = pts.map(p => p.step).filter(x => x != null);
+  const mean = steps.reduce((a, b) => a + b, 0) / (steps.length || 1);
+  const vol = steps.length > 1 ? Math.sqrt(steps.reduce((a, b) => a + (b - mean) ** 2, 0) / (steps.length - 1)) : null;
+  const ret = pts[pts.length - 1].ret;
+  return { value: pts[pts.length - 1].v, ret, vol, maxDD: Math.min(...pts.map(p => p.dd)),
+           ratio: vol ? ret / vol : null, n: pts.length };
+}
+
+function render() {
+  const S = series();
+  const st = Object.fromEntries(TRADERS.map(t => [t, stats(S.since[t])]));
+  document.querySelectorAll(".joinT").forEach(e => e.textContent = S.joinT);
+  renderTiles(S, st);
+  renderPerf(S);
+  renderDD(S);
+  renderRisk(st);
+  renderSignals();
+  renderLog();
+}
+
+function tile(label, value, note, status) {
+  return `<div class="card tile"><div class="label">${label}</div><div class="value">${value}</div>
+          <div class="note">${status ? `<span class="status"><i class="dot" style="background:var(${status.color})"></i>${status.text}</span> ` : ""}${note || ""}</div></div>`;
+}
+
+function renderTiles(S, st) {
+  const me = st[ME];
+  const ranked = TRADERS.filter(t => st[t].ret != null).sort((a, b) => st[b].ret - st[a].ret);
+  const rank = ranked.indexOf(ME) + 1;
+  const best = ranked.filter(t => t !== ME)[0];
+  const lead = me.ret - st[best].ret;
+  const h = state.live[ME] || state.snaps[state.snaps.length - 1].holdings[ME];
+  const cash = h ? h.money : NaN;
+  const spendable = Math.max(0, cash - RESERVE);
+  const lastDec = state.decisions[state.decisions.length - 1];
+  const cashStatus = spendable < 100 ? { color: "--critical", text: "Can't buy" }
+                   : spendable < 1000 ? { color: "--warning", text: "Low" } : { color: "--good", text: "OK" };
+  document.getElementById("tiles").innerHTML = [
+    tile("Total value", fmt(me.value), `${pct(me.ret)} since tick ${S.joinT}`),
+    tile("Rank vs. baselines", `${rank} / ${ranked.length}`,
+         `${pct(lead)} vs. best baseline (${LABEL[best]})`,
+         lead >= 0 ? { color: "--good", text: "Ahead" } : { color: "--critical", text: "Behind" }),
+    tile("Max drawdown", pct(me.maxDD), me.vol != null ? `volatility ${me.vol.toFixed(2)}% / tick` : "needs more ticks"),
+    tile("Cash available to buy", fmt(spendable, 2), `money ${fmt(cash, 2)} − reserve ${RESERVE}`, cashStatus),
+    tile("Current decision", lastDec ? PRODUCTS.map(p => `${p} ${sgn(lastDec.decision[p])}`).join(" · ") : "—",
+         lastDec ? `written ${new Date(lastDec.updated_at).toLocaleString()}` : ""),
+  ].join("");
+  const decTile = document.querySelector("#tiles .tile:last-child .value");
+  decTile.style.fontSize = "15px";
+}
+
+function legendHTML() {
+  return TRADERS.map(t => `<span><i class="swatch" style="border-color:var(${SLOT[t]});border-top-style:${t === ME ? "solid" : "dashed"};border-top-width:${t === ME ? 3 : 2}px"></i>${LABEL[t]}</span>`).join("");
+}
+
+function baseOptions(yTitle, yFmt) {
+  const ink2 = css("--ink-2"), grid = css("--grid"), axis = css("--axis");
+  return {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: { legend: { display: false },
+      tooltip: { callbacks: {
+        title: items => { const r = items[0].raw; return `Tick ${r.x}` + (r.ts ? ` · ${new Date(r.ts).toLocaleString()}` : ""); },
+        label: c => `${c.dataset.label}: ${yFmt(c.parsed.y)}` } } },
+    scales: {
+      x: { type: "linear", title: { display: true, text: "Market tick", color: ink2 },
+           ticks: { color: ink2, precision: 0 }, grid: { color: grid }, border: { color: axis } },
+      y: { title: { display: !!yTitle, text: yTitle, color: ink2 }, ticks: { color: ink2, callback: yFmt },
+           grid: { color: grid }, border: { color: axis } },
+    },
+  };
+}
+
+function lineDS(t, pts, key) {
+  const c = css(SLOT[t]);
+  return { label: LABEL[t], data: pts.map(p => ({ x: p.t, y: p[key], ts: p.ts })), borderColor: c, backgroundColor: c,
+           borderWidth: t === ME ? 3 : 2, borderDash: DASH[t], pointRadius: pts.length < 25 ? 4 : 0,
+           pointHoverRadius: 5, tension: 0 };
+}
+
+function draw(id, config) {
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(document.getElementById(id), config);
+}
+
+function renderPerf(S) {
+  document.getElementById("perfLegend").innerHTML = legendHTML();
+  if (perfMode === "return") {
+    document.getElementById("perfTitle").textContent = "Return since I joined vs. baselines";
+    document.getElementById("perfSub").innerHTML = `Every trader indexed to their own value at tick ${S.joinT}, when I started, so the comparison is like-for-like.`;
+    draw("perfChart", { type: "line", data: { datasets: TRADERS.map(t => lineDS(t, S.since[t], "ret")) },
+                        options: baseOptions("Return since join (%)", v => pct(v)) });
+  } else {
+    document.getElementById("perfTitle").textContent = "Total portfolio value, whole game";
+    document.getElementById("perfSub").textContent = "Absolute value (money + holdings at market price). The baselines have traded since tick 1; I start where my line starts.";
+    draw("perfChart", { type: "line", data: { datasets: TRADERS.map(t => lineDS(t, S.all[t], "v")) },
+                        options: baseOptions("Total value", v => fmt(v)) });
+  }
+}
+
+function renderDD(S) {
+  document.getElementById("ddLegend").innerHTML = legendHTML();
+  const o = baseOptions("Drawdown (%)", v => pct(v, 1));
+  o.scales.y.max = 0;
+  draw("ddChart", { type: "line", data: { datasets: TRADERS.map(t => lineDS(t, S.since[t], "dd")) }, options: o });
+}
+
+function renderRisk(st) {
+  const rows = TRADERS.map(t => {
+    const s = st[t];
+    return `<tr class="${t === ME ? "me" : ""}"><td style="white-space:nowrap"><i class="swatch" style="border-color:var(${SLOT[t]});border-top-style:${t === ME ? "solid" : "dashed"}"></i> ${LABEL[t]}</td>
+      <td class="num">${pct(s.ret)}</td><td class="num">${s.vol != null ? s.vol.toFixed(2) + "%" : "—"}</td>
+      <td class="num">${pct(s.maxDD)}</td><td class="num">${s.ratio != null ? s.ratio.toFixed(2) : "—"}</td></tr>`;
+  }).join("");
+  document.getElementById("riskTable").innerHTML =
+    `<thead><tr><th>Trader</th><th class="num">Return</th><th class="num">Volatility</th><th class="num">Max DD</th><th class="num">Return / vol</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+function renderSignals() {
+  const { market, decisions } = state;
+  const hist = market.history;
+  const lastDec = decisions[decisions.length - 1];
+  const h = state.live[ME];
+  const from = sigWindow ? Math.max(0, hist.length - sigWindow) : 0;
+  const box = document.getElementById("signals");
+  box.innerHTML = PRODUCTS.map(p => `<div class="card" style="padding:12px">
+      <div class="row"><h2>Product ${p}</h2><span class="sig" id="now${p}"></span></div>
+      <div class="chart small"><canvas id="price${p}"></canvas></div>
+      <div class="muted" style="font-size:12px;margin-top:6px">Signal (−1 sell … +1 buy)</div>
+      <div class="chart tiny"><canvas id="sig${p}"></canvas></div>
+      <div class="muted" style="font-size:12px;margin-top:6px" id="pos${p}"></div></div>`).join("");
+
+  for (const p of PRODUCTS) {
+    const prices = hist.map(r => r[p]);
+    const rows = [];
+    for (let i = from; i < hist.length; i++) {
+      const s = signalAt(prices.slice(0, i + 1));
+      rows.push({ x: hist[i].t, ts: hist[i].timestamp, price: prices[i], short: s?.short, long: s?.long, sig: s ? s.signal : 0 });
+    }
+    const ink2 = css("--ink-2");
+    const mk = (label, key, color, extra = {}) => ({ label, data: rows.map(r => ({ x: r.x, y: r[key], ts: r.ts })),
+      borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0, ...extra });
+    const po = baseOptions("", v => v.toFixed(2));
+    po.scales.x.title.display = false;
+    draw("price" + p, { type: "line", options: po, data: { datasets: [
+      mk("Price", "price", ink2, { borderWidth: 1.5 }),
+      mk("Short MA (5)", "short", css("--s1")),
+      mk("Long MA (15)", "long", css("--s2"), { borderDash: [6, 4] }),
+    ] } });
+
+    const so = baseOptions("", v => v.toFixed(1));
+    so.scales.x.title.display = false; so.scales.x.ticks.display = false;
+    so.scales.y.min = -1; so.scales.y.max = 1; so.scales.y.ticks.stepSize = 1;
+    so.plugins.tooltip.callbacks.label = c => `Raw signal: ${sgn(c.parsed.y)}`;
+    draw("sig" + p, { type: "bar", options: so, data: { datasets: [{
+      label: "Signal", data: rows.map(r => ({ x: r.x, y: r.sig, ts: r.ts })),
+      backgroundColor: rows.map(r => r.sig >= 0 ? css("--pos") : css("--neg")),
+      barPercentage: 1, categoryPercentage: 0.8, borderRadius: 2 }] } });
+
+    const cur = signalAt(prices);
+    const fin = lastDec ? lastDec.decision[p] : null;
+    document.getElementById("now" + p).innerHTML = cur
+      ? `raw <b>${sgn(cur.signal)}</b>${fin != null ? ` → sent <b>${sgn(fin)}</b>` : ""}` : "not enough history";
+    if (h) {
+      const px = prices[prices.length - 1];
+      document.getElementById("pos" + p).textContent =
+        `Holding ${fmt(h.products[p], 1)} units × ${px.toFixed(3)} = ${fmt(h.products[p] * px)} · MA gap ${cur ? pct(cur.gap) : "—"}`;
+    }
+  }
+}
+
+function renderLog() {
+  const rows = state.decisions.slice().reverse().map(d => `<tr>
+      <td class="num">${new Date(d.updated_at).toLocaleString()}</td><td class="num">${d.market_t}</td>
+      ${PRODUCTS.map(p => `<td class="num">${sgn(d.decision[p])}${d.raw_signal && d.raw_signal[p] !== d.decision[p] ? ` <span class="muted">(${sgn(d.raw_signal[p])})</span>` : ""}</td>`).join("")}
+      <td class="num">${fmt(d.money, 2)}</td>
+      <td class="reason">${d.reason.split(" | ").map(r => `<div>${r.replace(/</g, "&lt;")}</div>`).join("")}</td></tr>`).join("");
+  document.getElementById("logTable").innerHTML =
+    `<thead><tr><th class="num">Written</th><th class="num">Tick</th>${PRODUCTS.map(p => `<th class="num">${p}</th>`).join("")}<th class="num">Money</th><th>Reason</th></tr></thead>
+     <tbody>${rows || `<tr><td colspan="7" class="muted">No decisions logged yet.</td></tr>`}</tbody>`;
+}
+
+document.querySelectorAll("[data-perf]").forEach(b => b.addEventListener("click", () => {
+  perfMode = b.dataset.perf;
+  document.querySelectorAll("[data-perf]").forEach(x => x.setAttribute("aria-pressed", x === b));
+  if (state) renderPerf(series());
+}));
+document.querySelectorAll("[data-win]").forEach(b => b.addEventListener("click", () => {
+  sigWindow = +b.dataset.win;
+  document.querySelectorAll("[data-win]").forEach(x => x.setAttribute("aria-pressed", x === b));
+  if (state) renderSignals();
+}));
+document.getElementById("refresh").addEventListener("click", load);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state && render());
+new MutationObserver(() => state && render()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+load();
+setInterval(load, 10 * 60 * 1000);
 </script>
 </body>
 </html>
