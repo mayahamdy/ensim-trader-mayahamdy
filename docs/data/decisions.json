@@ -62,5 +62,21 @@
   },
   "money": 55.72,
   "reason": "A: price 4.840, 12-tick forecast 5.685 (+17.45%, cycle 48 ticks, R2 0.98) -> buy +1.000, budget guard cut to +0.012 (money 55.72) | B: price 12.619, 12-tick forecast 12.870 (+1.99%, cycle 97 ticks, R2 0.97) -> buy +0.794, budget guard cut to +0.005 (money 55.72) | C: price 1.171, 12-tick forecast 0.874 (-25.38%, cycle 24 ticks, R2 0.98) -> sell -1.000"
+ },
+ {
+  "updated_at": "2026-11-27T04:28:03Z",
+  "market_t": 385,
+  "decision": {
+   "A": 0.202,
+   "B": 0.081,
+   "C": -1.0
+  },
+  "raw_signal": {
+   "A": 1.0,
+   "B": 0.408,
+   "C": -1.0
+  },
+  "money": 153.01,
+  "reason": "A: price 5.107, 12-tick forecast 5.696 (+11.53%, cycle 48 ticks, R2 0.98) -> buy +1.000, budget guard cut to +0.202 (money 153.01) | B: price 12.703, 12-tick forecast 12.833 (+1.02%, cycle 97 ticks, R2 0.97) -> buy +0.408, budget guard cut to +0.081 (money 153.01) | C: price 1.098, 12-tick forecast 0.962 (-12.35%, cycle 24 ticks, R2 0.98) -> sell -1.000"
  }
 ]
